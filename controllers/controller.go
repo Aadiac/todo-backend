@@ -23,6 +23,8 @@ const connectionString = "mongodb+srv://aadithmongodb:mongodb@cluster0.710qp.mon
 const dbname = "DOdb"
 const collectionName = "todo"
 
+var SessionCtx model.User 
+
 var Collection *mongo.Collection
 
 func init() {
@@ -70,49 +72,57 @@ func FindOne(email string) model.User {
 
 }
 
-func updateTask(updateReq model.EditTaskRequest,id primitive.ObjectID) error {
+func updateTask(updateReq model.EditTaskRequest, id primitive.ObjectID, isTaskDel bool) error {
 	fmt.Println("controllers.updateTask() >>>")
 
-	filter := bson.M{"task._id": id,"email" :updateReq.Email }
-	update := bson.M{"$set": bson.M{"task.$.createdDate": time.Now().Format("2006-01-02"),
-									"task.$.task": updateReq.Task,
-									"task.$.completedBy":updateReq.Completed,
-					}}
+	var update bson.M
+	var operation string
+	filter := bson.M{"task._id": id, "email": updateReq.Email}
 
+	if !isTaskDel {
+		update = bson.M{"$set": bson.M{"task.$.createdDate": time.Now().Format("2006-01-02"),
+			"task.$.task":        updateReq.Task,
+			"task.$.completedBy": updateReq.Completed,
+		}}
+		operation = "update"
+	}else{
+		update = bson.M{"$pull":bson.M{"task": bson.M{"_id":id}}}
+		operation = "delete Task"
+	}
 	updateRes, err := Collection.UpdateOne(context.Background(), filter, update)
 	if err != nil {
 		return err
 	}
 
-	if updateRes.ModifiedCount == 0{
+	if updateRes.ModifiedCount == 0 {
 		return fmt.Errorf("task not found,no change made")
 	}
-	fmt.Println("updateTask Result : ", updateRes.ModifiedCount)
+	fmt.Println(operation,"task Result : ", updateRes.ModifiedCount)
 
 	fmt.Println("controllers.updateTask() <<<")
 
 	return nil
 }
 
-func appendTask(task[] model.TaskList,email string) error{
+func appendTask(task []model.TaskList, email string) error {
 	fmt.Println("controller.appendTask() >>>")
 
-	filter := bson.M{"email":email}
-	update := bson.M{"$set":bson.M{"task":task}}
+	filter := bson.M{"email": email}
+	update := bson.M{"$set": bson.M{"task": task}}
 
-	updateRes,err := Collection.UpdateOne(context.Background(),filter,update)
+	updateRes, err := Collection.UpdateOne(context.Background(), filter, update)
 
 	if err != nil {
 		return err
 	}
-	if updateRes.ModifiedCount == 0{
+	if updateRes.ModifiedCount == 0 {
 		return fmt.Errorf("task not appended(modified)")
 	}
 
-	fmt.Println("appendTask Result : ",updateRes.ModifiedCount)
+	fmt.Println("appendTask Result : ", updateRes.ModifiedCount)
 
 	fmt.Println("controller.appendTask() <<<")
-	return  nil
+	return nil
 }
 
 //=================================================END OF HELPER METHODS
@@ -193,6 +203,23 @@ func Login(w http.ResponseWriter, r *http.Request) {
 	fmt.Println("controllers.Login() <<<")
 }
 
+func deleteOneTask(taskId string) error {
+	fmt.Println("controllers.deleteOneTask >>>")
+	id, err := primitive.ObjectIDFromHex(taskId)
+	if err != nil {
+		return err
+	}
+	filter := bson.M{"_id": id}
+
+	delCount, _ := Collection.DeleteOne(context.Background(), filter)
+	if delCount.DeletedCount != 0 {
+		return fmt.Errorf("error in deleteing task")
+	}
+	fmt.Println("controllers.deleteOneTask <<<")
+	return nil
+
+}
+
 func FetchTasks(w http.ResponseWriter, r *http.Request) {
 	fmt.Println("controllers.FetchTasks() >>>")
 
@@ -211,6 +238,10 @@ func FetchTasks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	
+	SessionCtx = storedData
+	fmt.Printf("Session Context : %+v\n",SessionCtx)
+
 	json.NewEncoder(w).Encode(&storedData.Task)
 	fmt.Println("controllers.FetchTasks() <<<")
 }
@@ -218,9 +249,8 @@ func FetchTasks(w http.ResponseWriter, r *http.Request) {
 func EditTask(w http.ResponseWriter, r *http.Request) {
 	fmt.Println("controllers.EditTask() >>>")
 
-	utils.PreflightCheck(w,r)
+	utils.PreflightCheck(w, r)
 	//  utils.PrintRawData(r)
-
 
 	var inputData model.EditTaskRequest
 	if err := json.NewDecoder(r.Body).Decode(&inputData); err != nil {
@@ -228,27 +258,27 @@ func EditTask(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid body", http.StatusBadRequest)
 		return
 	}
-	fmt.Printf("Type of Completeed BY : %T",inputData.Created)
+	fmt.Printf("Type of Completeed BY : %T", inputData.Created)
 	storedData := FindOne(inputData.Email) //real data from db
 
 	params := mux.Vars(r)
 	id, err := primitive.ObjectIDFromHex(params["taskid"])
 	utils.ErrHandle(err)
 
-	fmt.Println("inputdata tskid : ",inputData.TaskId," url id : ",id)
+	fmt.Println("inputdata tskid : ", inputData.TaskId, " url id : ", id)
 
-//handling if user press save if there is nothing to save
+	//handling if user press save if there is nothing to save
 	for index, task := range storedData.Task {
-		if task.TaskId == id{
-			if storedData.Task[index].Completed == inputData.Completed && storedData.Task[index].Created == time.Now().Format("2006-01-02") && storedData.Task[index].Task == inputData.Task{
-			json.NewEncoder(w).Encode(storedData)
+		if task.TaskId == id {
+			if storedData.Task[index].Completed == inputData.Completed && storedData.Task[index].Created == time.Now().Format("2006-01-02") && storedData.Task[index].Task == inputData.Task {
+				json.NewEncoder(w).Encode(storedData)
 			}
 		}
 	}
 	fmt.Printf("after creating new updated data : %+v\n", storedData)
 
 	// var updatedData []model.TaskList
-	if err := updateTask(inputData,id);err != nil{
+	if err := updateTask(inputData, id, false); err != nil {
 		http.Error(w, "Error In updating Db", http.StatusInternalServerError)
 		fmt.Println("Err in Updating DB ", err)
 		return
@@ -261,43 +291,76 @@ func EditTask(w http.ResponseWriter, r *http.Request) {
 
 }
 
-func AddNewTask(w http.ResponseWriter,r* http.Request){
+func AddNewTask(w http.ResponseWriter, r *http.Request) {
 	fmt.Println("controllers.AddNewTask()>>>")
 
-	utils.PreflightCheck(w,r)
-
+	utils.PreflightCheck(w, r)
 
 	// utils.PrintRawData(r)
 	var userInputData model.EditTaskRequest // same structure type of data are we used here
 
-	if err := json.NewDecoder(r.Body).Decode(&userInputData); err != nil{
-		fmt.Println("Error in decoding AddnewTask ",err)
-		http.Error(w,"Invalid Body",http.StatusBadRequest)
+	if err := json.NewDecoder(r.Body).Decode(&userInputData); err != nil {
+		fmt.Println("Error in decoding AddnewTask ", err)
+		http.Error(w, "Invalid Body", http.StatusBadRequest)
 		return
 	}
 
 	storedData := FindOne(userInputData.Email)
 
 	var newTask model.TaskList
-	newTask.TaskId		=	primitive.NewObjectIDFromTimestamp(time.Now())
-	newTask.Created		=	userInputData.Created
-	newTask.Task		=	userInputData.Task
-	newTask.Completed	=	userInputData.Completed
+	newTask.TaskId = primitive.NewObjectIDFromTimestamp(time.Now())
+	newTask.Created = userInputData.Created
+	newTask.Task = userInputData.Task
+	newTask.Completed = userInputData.Completed
 
 	storedData.Task = append(storedData.Task, newTask)
 
-	if err := appendTask(storedData.Task,userInputData.Email); err != nil{
+	if err := appendTask(storedData.Task, userInputData.Email); err != nil {
 		fmt.Println(err)
-		http.Error(w,err.Error(),http.StatusInternalServerError)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	
-	result := FindOne(userInputData.Email)
-	fmt.Printf("Updated SuccesFully : %+v\n",result)
 
+	result := FindOne(userInputData.Email)
+	fmt.Printf("Updated SuccesFully : %+v\n", result)
 
 	json.NewEncoder(w).Encode(result)
 	// w.WriteHeader(http.StatusOK)
 
 	fmt.Println("controllers.AddNewTask()<<<")
+}
+
+func DeleteTask(w http.ResponseWriter, r *http.Request) {
+	fmt.Println("controllers.DeleteTask()>>>")
+	utils.PreflightCheck(w, r)
+
+	 utils.PrintRawData(r)
+	var request model.EditTaskRequest
+	request.Email = SessionCtx.Email
+	// if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+	// 	fmt.Println("Error in decoding DeleteTask Req ", err)
+	// 	http.Error(w, "Invalid Body", http.StatusBadRequest)
+	// 	return
+	// }
+	// fmt.Println("Request email: ", request.Email)
+
+	
+	param := mux.Vars(r)
+	id,err := primitive.ObjectIDFromHex(param["taskid"])
+	if err != nil{
+		fmt.Println("Error in decoding taskid ", err)
+		http.Error(w, "decoding Taskid Failed", http.StatusBadRequest)
+		return
+	}
+
+	if err := updateTask(request,id,true); err != nil {
+		fmt.Println("Err in Deleting Task:", err)
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	fmt.Println("Task Deleted Succesfully ")
+	w.WriteHeader(http.StatusNoContent)
+
+	fmt.Println("controllers.DeleteTask()<<<")
+
 }

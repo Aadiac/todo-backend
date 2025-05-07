@@ -13,6 +13,7 @@ func Router() (*mux.Router){
 	r.HandleFunc("/tasks/{email}",controller.FetchTasks).Methods("GET")//display tasks 
 	r.HandleFunc("/updatetask/{taskid}",controller.EditTask).Methods("PUT")//update particular task
 	r.HandleFunc("/addnewtask",controller.AddNewTask).Methods("POST")
+	r.HandleFunc("/deletetask/{taskid}",controller.DeleteTask).Methods("DELETE")
 	
 	return r
 }
